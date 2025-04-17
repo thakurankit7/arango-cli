@@ -13,12 +13,14 @@ import (
 )
 
 var (
-	host     string
-	port     int
-	username string
-	password string
-	dbName   string
-	useSSL   bool
+	host            string
+	port            int
+	username        string
+	password        string
+	dbName          string
+	useSSL          bool
+	buffer          strings.Builder
+	isMultilineMode bool
 )
 
 var shellCmd = &cobra.Command{
@@ -112,11 +114,12 @@ func startShell(ctx context.Context, db driver.Database, client driver.Client) {
 				return
 			}
 
-			if handleSpecialCommands(ctx, db, client, input) {
+			if strings.HasPrefix(strings.TrimSpace(input), "/") {
+				handleSpecialCommands(ctx, db, client, input)
 				return
 			}
 
-			executeQuery(ctx, db, input)
+			executor(ctx, db, input)
 		},
 		completer,
 		prompt.OptionPrefix("arango> "),
@@ -129,13 +132,13 @@ func handleSpecialCommands(ctx context.Context, db driver.Database, client drive
 	lowerInput := strings.ToLower(input)
 
 	switch true {
-	case lowerInput == "show databases" || lowerInput == "db":
+	case lowerInput == "/show databases" || lowerInput == "/db":
 		showDatabases(ctx, client)
 		return true
-	case lowerInput == "show collections" || lowerInput == "col":
+	case lowerInput == "/show collections" || lowerInput == "/col":
 		showCollections(ctx, db)
 		return true
-	case strings.HasPrefix(lowerInput, "use "):
+	case strings.HasPrefix(lowerInput, "/use "):
 		useDatabase(ctx, db, client, strings.TrimPrefix(input, "use "))
 		return true
 	default:
@@ -182,6 +185,36 @@ func useDatabase(ctx context.Context, db driver.Database, client driver.Client, 
 	}
 	db = newDb
 	fmt.Printf("Using database '%s'\n", dbName)
+}
+
+func executor(ctx context.Context, db driver.Database, input string) {
+	// Check if line ends with a semi colon (force execution)
+	if strings.HasSuffix(strings.TrimSpace(input), ";") {
+		trimmedInput := strings.TrimSpace(input)
+		trimmedInput = trimmedInput[:len(trimmedInput)-1]
+
+		if isMultilineMode {
+			// Finalize the multiline query and execute
+			fullQuery := buffer.String() + trimmedInput
+			buffer.Reset()
+			isMultilineMode = false
+			executeQuery(ctx, db, fullQuery)
+		} else {
+			// Execute single line query (without the semi colon)
+			executeQuery(ctx, db, trimmedInput)
+		}
+		return
+	}
+
+	// If we're already in multiline mode, add this line to the buffer
+	if isMultilineMode {
+		buffer.WriteString(input + "\n")
+		return
+	}
+
+	// start multiline mode
+	buffer.WriteString(input + "\n")
+	isMultilineMode = true
 }
 
 func executeQuery(ctx context.Context, db driver.Database, query string) {
