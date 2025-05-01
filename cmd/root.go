@@ -8,7 +8,6 @@ var rootCmd = &cobra.Command{
 	Long:  `A command line interface to interact with ArangoDB databases and collections.`,
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() error {
 	return rootCmd.Execute()
 }

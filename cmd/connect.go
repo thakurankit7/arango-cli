@@ -3,11 +3,10 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
+	"time"
 
 	driver "github.com/arangodb/go-driver"
-	"github.com/arangodb/go-driver/http"
 	"github.com/c-bata/go-prompt"
 	"github.com/spf13/cobra"
 )
@@ -28,45 +27,25 @@ var shellCmd = &cobra.Command{
 	Short: "Start an interactive ArangoDB shell",
 	Long:  `Connect to ArangoDB and start an interactive shell similar to the mysql client.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		protocol := "http"
-		if useSSL {
-			protocol = "https"
+		config := &ShellConfig{
+			Host:     host,
+			Port:     port,
+			Username: username,
+			Password: password,
+			UseSSL:   useSSL,
+			DBName:   dbName,
 		}
 
-		connectionURL := fmt.Sprintf("%s://%s:%d", protocol, host, port)
-
-		conn, err := http.NewConnection(http.ConnectionConfig{
-			Endpoints: []string{connectionURL},
-		})
+		shellCtx, err := NewShellContext(config)
 		if err != nil {
-			return fmt.Errorf("failed to create connection: %v", err)
+			return fmt.Errorf("failed to initialize shell: %v", err)
 		}
 
-		client, err := driver.NewClient(driver.ClientConfig{
-			Connection:     conn,
-			Authentication: driver.BasicAuthentication(username, password),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create client: %v", err)
-		}
-
-		ctx := context.Background()
-		var db driver.Database
-
-		if dbName == "" {
-			dbName = "_system"
-		}
-
-		db, err = client.Database(ctx, dbName)
-		if err != nil {
-			return fmt.Errorf("failed to connect to database '%s': %v", dbName, err)
-		}
-
-		fmt.Printf("Connected to ArangoDB at %s, database: %s\n", connectionURL, dbName)
+		fmt.Printf("Connected to ArangoDB at %s, database: %s\n", shellCtx.ConnectionURL, shellCtx.CurrentDB)
 		fmt.Println("Type 'help' for help, 'exit' to quit")
 
 		// Start interactive shell
-		startShell(ctx, db, client)
+		startShell(shellCtx)
 		return nil
 	},
 }
@@ -74,11 +53,11 @@ var shellCmd = &cobra.Command{
 func completer(d prompt.Document) []prompt.Suggest {
 	// AQL keyword suggestions here
 	s := []prompt.Suggest{
-		{Text: "show collections", Description: "List collections"},
-		{Text: "col", Description: "List collections (shorthand)"},
-		{Text: "show databases", Description: "List databases"},
-		{Text: "db", Description: "List databases (shorthand)"},
-		{Text: "use", Description: "Switch database"},
+		{Text: "/show collections", Description: "List collections"},
+		{Text: "/col", Description: "List collections (shorthand)"},
+		{Text: "/show databases", Description: "List databases"},
+		{Text: "/db", Description: "List databases (shorthand)"},
+		{Text: "/use", Description: "Switch database"},
 		{Text: "FOR", Description: "AQL FOR loop"},
 		{Text: "RETURN", Description: "AQL RETURN statement"},
 		{Text: "FILTER", Description: "AQL FILTER statement"},
@@ -97,49 +76,18 @@ func completer(d prompt.Document) []prompt.Suggest {
 	return prompt.FilterHasPrefix(s, d.GetWordBeforeCursor(), true)
 }
 
-func startShell(ctx context.Context, db driver.Database, client driver.Client) {
-	p := prompt.New(
-		func(input string) {
-			input = strings.TrimSpace(input)
-			if input == "" {
-				return
-			}
-
-			switch strings.ToLower(input) {
-			case "exit", "quit":
-				fmt.Println("Goodbye!")
-				os.Exit(0)
-			case "help":
-				printHelp()
-				return
-			}
-
-			if strings.HasPrefix(strings.TrimSpace(input), "/") {
-				handleSpecialCommands(ctx, db, client, input)
-				return
-			}
-
-			executor(ctx, db, input)
-		},
-		completer,
-		prompt.OptionPrefix("arango> "),
-		prompt.OptionTitle("ArangoDB Shell"),
-	)
-	p.Run()
-}
-
-func handleSpecialCommands(ctx context.Context, db driver.Database, client driver.Client, input string) bool {
+func (s *ShellContext) handleSpecialCommands(input string) bool {
 	lowerInput := strings.ToLower(input)
 
 	switch true {
 	case lowerInput == "/show databases" || lowerInput == "/db":
-		showDatabases(ctx, client)
+		showDatabases(s.Context, s.Client)
 		return true
 	case lowerInput == "/show collections" || lowerInput == "/col":
-		showCollections(ctx, db)
+		showCollections(s.Context, s.DB)
 		return true
 	case strings.HasPrefix(lowerInput, "/use "):
-		useDatabase(ctx, db, client, strings.TrimPrefix(input, "use "))
+		s.useDatabase(strings.TrimPrefix(input, "/use "))
 		return true
 	default:
 		fmt.Printf("Unknown command: %s\n", input)
@@ -172,24 +120,26 @@ func showCollections(ctx context.Context, db driver.Database) {
 	}
 }
 
-func useDatabase(ctx context.Context, db driver.Database, client driver.Client, dbName string) {
+func (s *ShellContext) useDatabase(dbName string) {
+	fmt.Println("Switching database...", dbName)
 	if len(dbName) < 2 {
 		fmt.Println("Usage: :use <database>")
 		return
 	}
 
-	newDb, err := client.Database(ctx, dbName)
+	newDb, err := s.Client.Database(s.Context, dbName)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	db = newDb
+	s.DB = newDb
 	fmt.Printf("Using database '%s'\n", dbName)
 }
 
-func executor(ctx context.Context, db driver.Database, input string) {
+func (s *ShellContext) executor(input string) {
 	// Check if line ends with a semi colon (force execution)
 	if strings.HasSuffix(strings.TrimSpace(input), ";") {
+		fmt.Println("Executing query with semi colon")
 		trimmedInput := strings.TrimSpace(input)
 		trimmedInput = trimmedInput[:len(trimmedInput)-1]
 
@@ -198,10 +148,10 @@ func executor(ctx context.Context, db driver.Database, input string) {
 			fullQuery := buffer.String() + trimmedInput
 			buffer.Reset()
 			isMultilineMode = false
-			executeQuery(ctx, db, fullQuery)
+			s.executeQuery(fullQuery)
 		} else {
 			// Execute single line query (without the semi colon)
-			executeQuery(ctx, db, trimmedInput)
+			s.executeQuery(trimmedInput)
 		}
 		return
 	}
@@ -217,7 +167,7 @@ func executor(ctx context.Context, db driver.Database, input string) {
 	isMultilineMode = true
 }
 
-func executeQuery(ctx context.Context, db driver.Database, query string) {
+func (s *ShellContext) executeQuery(query string) {
 	if !strings.Contains(strings.ToUpper(query), "RETURN") &&
 		!strings.Contains(strings.ToUpper(query), "INSERT") &&
 		!strings.Contains(strings.ToUpper(query), "UPDATE") &&
@@ -226,45 +176,37 @@ func executeQuery(ctx context.Context, db driver.Database, query string) {
 		query = "RETURN " + query
 	}
 
-	cursor, err := db.Query(ctx, query, nil)
+	startTime := time.Now()
+	fmt.Println("query.......", query)
+	cursor, err := s.DB.Query(s.Context, query, nil)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 	defer cursor.Close()
 
+	executionTime := float64(time.Since(startTime)) / float64(time.Millisecond)
+
 	fmt.Println("Results:")
-	var result interface{}
+	var resultData []interface{}
 	count := 0
 	for {
-		_, err := cursor.ReadDocument(ctx, &result)
+		var doc interface{}
+		_, err := cursor.ReadDocument(s.Context, &doc)
 		if driver.IsNoMoreDocuments(err) {
 			break
 		} else if err != nil {
-			fmt.Printf("Error reading result: %v\n", err)
+			ShowPopup(fmt.Sprintf("Error reading result: %v", err))
 			return
 		}
-		fmt.Printf("%d: %v\n", count, result)
+		resultData = append(resultData, doc)
 		count++
 	}
-	fmt.Printf("%d record(s) returned\n", count)
-}
+	// stats := cursor.Extra().GetStatistics()
 
-func printHelp() {
-	help := `
-	ArangoDB Shell Commands:
-	:collections, :col          List collections in current database
-	:databases, :db             List available databases
-	:use <database>             Switch to a different database
-	exit, quit                  Exit the shell
-	help                        Display this help message
-
-	Any other input will be executed as an AQL query.
-	Example queries:
-	RETURN DOCUMENT("users/123")
-	FOR doc IN users RETURN doc
-	`
-	fmt.Println(help)
+	// Format the data and show in popup
+	formattedData := FormatQueryResult(resultData, nil, executionTime)
+	ShowPopup(formattedData)
 }
 
 func init() {
