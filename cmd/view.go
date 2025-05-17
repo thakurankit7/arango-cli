@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	driver "github.com/arangodb/go-driver"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -143,28 +144,15 @@ func ShowPopup(content string) error {
 	return err
 }
 
-func FormatQueryResult(result interface{}, stats map[string]interface{}, executionTime float64) string {
+func FormatQueryResult(result interface{}, stats driver.QueryStatistics) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("📊 Results:\n\n%v\n\n", result))
 
 	sb.WriteString("📈 Statistics:\n")
-	sb.WriteString(fmt.Sprintf("⏱️  Execution time: %.2f ms\n", executionTime))
-
-	if stats != nil {
-		if scanned, ok := stats["scannedFull"].(int); ok {
-			sb.WriteString(fmt.Sprintf("📄 Documents read: %d\n", scanned))
-		}
-		if written, ok := stats["writesExecuted"].(int); ok {
-			sb.WriteString(fmt.Sprintf("✏️  Documents written: %d\n", written))
-		}
-		if memory, ok := stats["peakMemoryUsage"].(int); ok {
-			sb.WriteString(fmt.Sprintf("💾 Memory usage: %s\n", formatBytes(memory)))
-		}
-		if serverTime, ok := stats["executionTime"].(float64); ok {
-			sb.WriteString(fmt.Sprintf("⏱️  Server execution time: %.2f ms\n", serverTime))
-		}
-	}
+	sb.WriteString(fmt.Sprintf("⏱️ Execution time: %v \n", stats.ExecutionTime()))
+	sb.WriteString(fmt.Sprintf("📄 Documents read: %d \n", stats.ScannedFull()))
+	sb.WriteString(fmt.Sprintf("✏️ Documents written: %d\n", stats.WritesExecuted()))
 
 	return sb.String()
 }

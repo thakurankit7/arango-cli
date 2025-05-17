@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	driver "github.com/arangodb/go-driver"
 	"github.com/c-bata/go-prompt"
@@ -176,7 +175,6 @@ func (s *ShellContext) executeQuery(query string) {
 		query = "RETURN " + query
 	}
 
-	startTime := time.Now()
 	fmt.Println("query.......", query)
 	cursor, err := s.DB.Query(s.Context, query, nil)
 	if err != nil {
@@ -184,8 +182,6 @@ func (s *ShellContext) executeQuery(query string) {
 		return
 	}
 	defer cursor.Close()
-
-	executionTime := float64(time.Since(startTime)) / float64(time.Millisecond)
 
 	fmt.Println("Results:")
 	var resultData []interface{}
@@ -202,10 +198,10 @@ func (s *ShellContext) executeQuery(query string) {
 		resultData = append(resultData, doc)
 		count++
 	}
-	// stats := cursor.Extra().GetStatistics()
+	stats := cursor.Statistics()
 
 	// Format the data and show in popup
-	formattedData := FormatQueryResult(resultData, nil, executionTime)
+	formattedData := FormatQueryResult(resultData, stats)
 	ShowPopup(formattedData)
 }
 
