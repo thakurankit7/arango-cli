@@ -138,7 +138,6 @@ func (s *ShellContext) useDatabase(dbName string) {
 func (s *ShellContext) executor(input string) {
 	// Check if line ends with a semi colon (force execution)
 	if strings.HasSuffix(strings.TrimSpace(input), ";") {
-		fmt.Println("Executing query with semi colon")
 		trimmedInput := strings.TrimSpace(input)
 		trimmedInput = trimmedInput[:len(trimmedInput)-1]
 
@@ -175,7 +174,6 @@ func (s *ShellContext) executeQuery(query string) {
 		query = "RETURN " + query
 	}
 
-	fmt.Println("query.......", query)
 	cursor, err := s.DB.Query(s.Context, query, nil)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -183,7 +181,6 @@ func (s *ShellContext) executeQuery(query string) {
 	}
 	defer cursor.Close()
 
-	fmt.Println("Results:")
 	var resultData []interface{}
 	count := 0
 	for {
