@@ -19,6 +19,8 @@ type (
 		Context       context.Context
 		Config        *ShellConfig
 		ConnectionURL string
+		ConfigManager *ConfigManager
+		CurrentConfig string
 	}
 	ShellConfig struct {
 		Host     string
@@ -73,7 +75,35 @@ func NewShellContext(config *ShellConfig) (*ShellContext, error) {
 	}, nil
 }
 
+func NewShellContextWithConfig(config *ShellConfig, configManager *ConfigManager, configName string) (*ShellContext, error) {
+	shellCtx, err := NewShellContext(config)
+	if err != nil {
+		return nil, err
+	}
+
+	shellCtx.ConfigManager = configManager
+	shellCtx.CurrentConfig = configName
+	return shellCtx, nil
+}
+
+func (s *ShellContext) showCurrentConnection() {
+	fmt.Printf("Current connection:\n")
+	fmt.Printf("  Config: %s\n", s.CurrentConfig)
+	fmt.Printf("  Host: %s\n", s.Config.Host)
+	fmt.Printf("  Port: %d\n", s.Config.Port)
+	fmt.Printf("  Database: %s\n", s.CurrentDB)
+	fmt.Printf("  Username: %s\n", s.Config.Username)
+	fmt.Printf("  SSL: %t\n", s.Config.UseSSL)
+	fmt.Printf("  URL: %s\n", s.ConnectionURL)
+}
+
 func startShell(s *ShellContext) {
+	promptPrefix := func() string {
+		if s.CurrentConfig != "manual" {
+			return fmt.Sprintf("arango[%s:%s]> ", s.CurrentConfig, s.CurrentDB)
+		}
+		return fmt.Sprintf("arango[%s]> ", s.CurrentDB)
+	}
 	p := prompt.New(
 		func(input string) {
 			input = strings.TrimSpace(input)
@@ -98,7 +128,7 @@ func startShell(s *ShellContext) {
 			s.executor(input)
 		},
 		completer,
-		prompt.OptionPrefix("arango> "),
+		prompt.OptionPrefix(promptPrefix()),
 		prompt.OptionTitle("ArangoDB Shell"),
 	)
 	p.Run()

@@ -19,6 +19,7 @@ var (
 	useSSL          bool
 	buffer          strings.Builder
 	isMultilineMode bool
+	configName      string
 )
 
 var shellCmd = &cobra.Command{
@@ -26,16 +27,43 @@ var shellCmd = &cobra.Command{
 	Short: "Start an interactive ArangoDB shell",
 	Long:  `Connect to ArangoDB and start an interactive shell similar to the mysql client.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		config := &ShellConfig{
-			Host:     host,
-			Port:     port,
-			Username: username,
-			Password: password,
-			UseSSL:   useSSL,
-			DBName:   dbName,
+		configManager, err := NewConfigManager()
+		if err != nil {
+			return fmt.Errorf("failed to initialize config manager: %v", err)
 		}
 
-		shellCtx, err := NewShellContext(config)
+		var config *ShellConfig
+		var currentConfigName string
+		if configName != "" {
+			// Connect using saved configuration
+			dbConfig, err := configManager.GetDatabaseConfig(configName)
+			if err != nil {
+				return fmt.Errorf("failed to get database config '%s': %v", configName, err)
+			}
+
+			config = &ShellConfig{
+				Host:     dbConfig.Host,
+				Port:     dbConfig.Port,
+				Username: dbConfig.Username,
+				Password: dbConfig.Password,
+				UseSSL:   dbConfig.SSL,
+				DBName:   dbConfig.Database,
+			}
+			currentConfigName = configName
+		} else {
+			// Connect using command line flags
+			config = &ShellConfig{
+				Host:     host,
+				Port:     port,
+				Username: username,
+				Password: password,
+				UseSSL:   useSSL,
+				DBName:   dbName,
+			}
+			currentConfigName = "manual"
+		}
+
+		shellCtx, err := NewShellContextWithConfig(config, configManager, currentConfigName)
 		if err != nil {
 			return fmt.Errorf("failed to initialize shell: %v", err)
 		}
@@ -77,6 +105,7 @@ func completer(d prompt.Document) []prompt.Suggest {
 
 func (s *ShellContext) handleSpecialCommands(input string) bool {
 	lowerInput := strings.ToLower(input)
+	parts := strings.Fields(input)
 
 	switch true {
 	case lowerInput == "/show databases" || lowerInput == "/db":
@@ -87,6 +116,19 @@ func (s *ShellContext) handleSpecialCommands(input string) bool {
 		return true
 	case strings.HasPrefix(lowerInput, "/use "):
 		s.useDatabase(strings.TrimPrefix(input, "/use "))
+		return true
+	case lowerInput == "/list configs" || lowerInput == "/configs":
+		s.listConfigs()
+		return true
+	case strings.HasPrefix(lowerInput, "/switch "):
+		if len(parts) >= 2 {
+			s.switchToConfig(parts[1])
+		} else {
+			fmt.Println("Usage: /switch <config_name>")
+		}
+		return true
+	case lowerInput == "/current":
+		s.showCurrentConnection()
 		return true
 	default:
 		fmt.Printf("Unknown command: %s\n", input)
@@ -132,6 +174,7 @@ func (s *ShellContext) useDatabase(dbName string) {
 		return
 	}
 	s.DB = newDb
+	s.CurrentDB = dbName
 	fmt.Printf("Using database '%s'\n", dbName)
 }
 
