@@ -85,4 +85,4 @@ Once you're in the interactive shell, you can use the following commands:
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the MIT License.
