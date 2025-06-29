@@ -6,6 +6,9 @@ var rootCmd = &cobra.Command{
 	Use:   "arango-cli",
 	Short: "A CLI tool for ArangoDB",
 	Long:  `A command line interface to interact with ArangoDB databases and collections.`,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		PrintBanner()
+	},
 }
 
 func Execute() error {
